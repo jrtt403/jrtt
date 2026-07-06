@@ -1,0 +1,39 @@
+{
+  "sources": [
+    {
+      "name": "BBC World",
+      "category": "international",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "weight": 4,
+      "enabled": true
+    },
+    {
+      "name": "BBC Asia",
+      "category": "international",
+      "url": "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
+      "weight": 4,
+      "enabled": true
+    },
+    {
+      "name": "Google News Reuters Search",
+      "category": "international",
+      "url": "https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US%3Aen",
+      "weight": 4,
+      "enabled": true
+    },
+    {
+      "name": "CCTV 国内新闻",
+      "category": "china",
+      "url": "http://www.cctv.com/program/rss/02/01/index.xml",
+      "weight": 4,
+      "enabled": true
+    },
+    {
+      "name": "CCTV 国际新闻",
+      "category": "china",
+      "url": "http://www.cctv.com/program/rss/02/02/index.xml",
+      "weight": 4,
+      "enabled": true
+    }
+  ]
+}

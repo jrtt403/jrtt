@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+.env
+
+# Local runtime state
+data/*.db
+data/*.db-*
