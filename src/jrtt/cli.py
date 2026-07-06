@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -30,6 +31,7 @@ DATA_DIR = ROOT / "data"
 DRAFTS_DIR = ROOT / "drafts"
 ARTICLES_DIR = ROOT / "articles"
 PUBLIC_DIR = ROOT / "public"
+DEFAULT_BASE_URL = os.environ.get("JRTT_BASE_URL", "https://jrtt403.github.io/jrtt")
 SOURCES_FILE = ROOT / "config" / "sources.json"
 DB_FILE = DATA_DIR / "jrtt.db"
 
@@ -499,6 +501,9 @@ def cmd_auto(args: argparse.Namespace) -> None:
         raise SystemExit(f"no article generated. skipped: {skipped_text}")
     if args.publish_feed:
         publish_articles("latest", args.base_url)
+    if args.deploy:
+        publish_articles("latest", args.base_url)
+        deploy_to_github_pages(args.base_url, args.commit_message)
 
 
 def find_auto_candidates(
@@ -659,6 +664,35 @@ def publish_articles(selector: str, base_url: str) -> None:
     print(PUBLIC_DIR / "feed.xml")
     for article in published:
         print(article.html_path)
+
+
+def cmd_deploy(args: argparse.Namespace) -> None:
+    publish_articles(args.article, args.base_url)
+    deploy_to_github_pages(args.base_url, args.message)
+
+
+def deploy_to_github_pages(base_url: str, message: str) -> None:
+    run_git(["add", "articles", "public", "README.md", "WORK_CONTEXT.md", "docs", "src", "scripts"])
+    staged = run_git(["diff", "--cached", "--name-only"], capture=True)
+    if not staged.strip():
+        print("nothing to deploy")
+        print(f"{base_url.rstrip('/')}/feed.xml")
+        return
+    run_git(["commit", "-m", message])
+    run_git(["push"])
+    print(f"{base_url.rstrip('/')}/feed.xml")
+
+
+def run_git(args: list[str], capture: bool = False) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.STDOUT if capture else None,
+    )
+    return result.stdout or ""
 
 
 def build_final_article(
@@ -912,7 +946,9 @@ def main() -> None:
     auto_parser.add_argument("--max-output-tokens", type=int, default=2600)
     auto_parser.add_argument("--min-article-chars", type=int, default=1000, help="生成文章最低字符数")
     auto_parser.add_argument("--publish-feed", action="store_true", help="生成文章后同步更新 public/feed.xml")
-    auto_parser.add_argument("--base-url", default="", help="公网发布根地址，例如 https://example.com")
+    auto_parser.add_argument("--deploy", action="store_true", help="生成文章后提交并推送到 GitHub Pages")
+    auto_parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="公网发布根地址")
+    auto_parser.add_argument("--commit-message", default="Add generated article", help="自动部署的 git commit 信息")
     auto_parser.set_defaults(fetch=True, enrich=True, require_enriched=True, allow_risky=False)
     auto_parser.set_defaults(func=cmd_auto)
 
@@ -922,8 +958,18 @@ def main() -> None:
         default="latest",
         help="latest、all，或指定 articles/ 下的 Markdown 文件",
     )
-    publish_parser.add_argument("--base-url", default="", help="公网发布根地址，例如 https://example.com")
+    publish_parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="公网发布根地址")
     publish_parser.set_defaults(func=cmd_publish)
+
+    deploy_parser = subparsers.add_parser("deploy", help="更新内容源并推送到 GitHub Pages")
+    deploy_parser.add_argument(
+        "--article",
+        default="latest",
+        help="latest、all，或指定 articles/ 下的 Markdown 文件",
+    )
+    deploy_parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="公网发布根地址")
+    deploy_parser.add_argument("--message", default="Publish generated article", help="git commit 信息")
+    deploy_parser.set_defaults(func=cmd_deploy)
 
     args = parser.parse_args()
     args.func(args)

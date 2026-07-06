@@ -44,10 +44,13 @@ https://你的GitHub用户名.github.io/jrtt/feed.xml
 生成新文章并更新内容源：
 
 ```bash
-python3 src/jrtt/cli.py auto --count 1 --publish-feed --base-url https://你的GitHub用户名.github.io/jrtt
-git add articles public
-git commit -m "Add generated article"
-git push
+python3 src/jrtt/cli.py auto --count 1 --deploy
+```
+
+只同步已有最新文章：
+
+```bash
+python3 src/jrtt/cli.py deploy
 ```
 
 ## 注意

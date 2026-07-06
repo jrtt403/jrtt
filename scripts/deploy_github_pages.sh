@@ -3,13 +3,13 @@ set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
   echo "Usage: scripts/deploy_github_pages.sh <github-username> <repo-name> [remote-url]" >&2
-  echo "Example: scripts/deploy_github_pages.sh alice jrtt https://github.com/alice/jrtt.git" >&2
+  echo "Example: scripts/deploy_github_pages.sh jrtt403 jrtt git@github.com:jrtt403/jrtt.git" >&2
   exit 1
 fi
 
 USERNAME="$1"
 REPO="$2"
-REMOTE_URL="${3:-https://github.com/${USERNAME}/${REPO}.git}"
+REMOTE_URL="${3:-git@github.com:${USERNAME}/${REPO}.git}"
 BASE_URL="https://${USERNAME}.github.io/${REPO}"
 
 python3 src/jrtt/cli.py publish --article latest --base-url "${BASE_URL}"

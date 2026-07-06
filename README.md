@@ -83,6 +83,18 @@ https://你的公网域名/feed.xml
 python3 src/jrtt/cli.py auto --count 1 --publish-feed --base-url https://你的公网域名
 ```
 
+当前 GitHub Pages 已配置好后，可以一条命令完成生成、更新内容源、提交并推送：
+
+```bash
+python3 src/jrtt/cli.py auto --count 1 --deploy
+```
+
+只把已有最新文章重新同步到 GitHub Pages：
+
+```bash
+python3 src/jrtt/cli.py deploy
+```
+
 注意：抖音开放平台的头条 OpenAPI 当前面向视频发布，暂不支持头条文章和微头条。图文文章优先使用头条号后台手动发布或网站内容源同步。
 
 没有公网域名时，可以用 GitHub Pages 免费二级域名托管内容源：
