@@ -109,6 +109,40 @@ https://jrtt403.github.io/jrtt/feed.xml
 
 注意：抖音开放平台的头条 OpenAPI 当前面向视频发布，暂不支持头条文章和微头条。图文文章优先使用头条号后台手动发布或网站内容源同步。
 
+### Playwright 自动发布到头条号
+
+如果内容源同步不可用，也可以用浏览器自动化填充头条号后台。首次运行建议使用有头模式，手动完成登录：
+
+```bash
+python3 scripts/toutiao_publish_playwright.py
+```
+
+登录态会保存在本地：
+
+```text
+data/toutiao_profile/
+```
+
+确认能打开预览后，再执行真实提交：
+
+```bash
+python3 scripts/toutiao_publish_playwright.py --confirm-publish
+```
+
+锁屏或定时任务场景可以尝试无头模式：
+
+```bash
+python3 scripts/toutiao_publish_playwright.py --headless --confirm-publish
+```
+
+也可以一条命令完成“生成文章、部署 GitHub Pages、提交头条后台”：
+
+```bash
+scripts/toutiao_auto_publish.sh
+```
+
+注意：这是非官方浏览器自动化，不等于官方 API。登录过期、验证码、风控、后台改版、封面要求变化都可能导致失败；失败时会保存截图到 `data/toutiao_last.png`。
+
 没有公网域名时，可以用 GitHub Pages 免费二级域名托管内容源：
 
 ```bash
