@@ -22,18 +22,32 @@
       "enabled": true
     },
     {
+      "name": "CGTN China",
+      "category": "china",
+      "url": "https://www.cgtn.com/subscribe/rss/section/china.xml",
+      "weight": 4,
+      "enabled": true
+    },
+    {
+      "name": "China Daily China",
+      "category": "china",
+      "url": "http://www.chinadaily.com.cn/rss/china_rss.xml",
+      "weight": 3,
+      "enabled": true
+    },
+    {
       "name": "CCTV 国内新闻",
       "category": "china",
       "url": "http://www.cctv.com/program/rss/02/01/index.xml",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "CCTV 国际新闻",
       "category": "china",
       "url": "http://www.cctv.com/program/rss/02/02/index.xml",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     }
   ]
 }
