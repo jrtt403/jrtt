@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -93,7 +94,7 @@ def generate_responses_text(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with open_url(request, 180) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -133,7 +134,7 @@ def generate_chat_text(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=180) as response:
+        with open_url(request, 180) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -159,6 +160,16 @@ def extract_output_text(data: dict) -> str:
             if content.get("type") in {"output_text", "text"} and isinstance(content.get("text"), str):
                 chunks.append(content["text"])
     return "\n".join(chunks)
+
+
+def open_url(request: urllib.request.Request, timeout: int):
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+        context = ssl._create_unverified_context()
+        return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def extract_chat_text(data: dict) -> str:

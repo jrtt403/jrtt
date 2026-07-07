@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import socket
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -95,7 +96,7 @@ def fetch_article_context(url: str, timeout: int = 25) -> ArticleContext:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_url(request, timeout) as response:
             final_url = response.geturl()
             content_type = response.headers.get("content-type", "")
             payload = response.read(1_500_000)
@@ -122,6 +123,16 @@ def fetch_article_context(url: str, timeout: int = 25) -> ArticleContext:
             "Google News article shell did not expose the publisher article text.",
         )
     return ArticleContext(url, final_url, parser.title, article_text)
+
+
+def open_url(request: urllib.request.Request, timeout: int):
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+        context = ssl._create_unverified_context()
+        return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def decode_payload(payload: bytes, content_type: str) -> str:

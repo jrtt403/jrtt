@@ -9,6 +9,7 @@ import html
 import json
 import os
 import re
+import ssl
 import sqlite3
 import subprocess
 import sys
@@ -74,8 +75,15 @@ def fetch_url(url: str) -> bytes:
             "User-Agent": "jrtt-ai-creator-mvp/0.1 (+local personal research)"
         },
     )
-    with urllib.request.urlopen(req, timeout=20) as response:
-        return response.read()
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return response.read()
+    except urllib.error.URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, timeout=20, context=context) as response:
+            return response.read()
 
 
 def text_from_node(node: ET.Element | None) -> str:

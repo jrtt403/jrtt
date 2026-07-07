@@ -89,10 +89,22 @@ python3 src/jrtt/cli.py auto --count 1 --publish-feed --base-url https://你的�
 python3 src/jrtt/cli.py auto --count 1 --deploy
 ```
 
+也可以用脚本：
+
+```bash
+scripts/auto_publish.sh
+```
+
 只把已有最新文章重新同步到 GitHub Pages：
 
 ```bash
 python3 src/jrtt/cli.py deploy
+```
+
+当前默认内容源地址：
+
+```text
+https://jrtt403.github.io/jrtt/feed.xml
 ```
 
 注意：抖音开放平台的头条 OpenAPI 当前面向视频发布，暂不支持头条文章和微头条。图文文章优先使用头条号后台手动发布或网站内容源同步。

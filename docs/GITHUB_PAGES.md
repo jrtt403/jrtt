@@ -44,7 +44,7 @@ https://你的GitHub用户名.github.io/jrtt/feed.xml
 生成新文章并更新内容源：
 
 ```bash
-python3 src/jrtt/cli.py auto --count 1 --deploy
+scripts/auto_publish.sh
 ```
 
 只同步已有最新文章：
