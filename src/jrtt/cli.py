@@ -16,6 +16,7 @@ import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 
 try:
@@ -619,6 +620,325 @@ def is_high_risk_topic(row: sqlite3.Row) -> bool:
 
 
 @dataclass
+class PublishedArticleSeed:
+    path: Path
+    title: str
+    original_title: str
+    source: str
+    link: str
+    published_at: str | None
+    article_text: str
+    article_date: dt.date
+
+
+@dataclass
+class FollowUpCandidate:
+    seed: PublishedArticleSeed
+    row: sqlite3.Row
+    similarity: float
+    reason: str
+
+
+def cmd_followup(args: argparse.Namespace) -> None:
+    if args.fetch:
+        fetch_all_sources()
+
+    conn = connect_db()
+    seeds = load_published_article_seeds(
+        ARTICLES_DIR,
+        args.lookback_days,
+        args.include_followups,
+    )
+    if not seeds:
+        print("no recent published articles found for follow-up check")
+        return
+
+    candidates = find_followup_candidates(
+        conn,
+        seeds,
+        args.candidate_limit,
+        args.min_score,
+        args.min_similarity,
+        args.allow_risky,
+    )
+    if not candidates:
+        print("no follow-up candidates found")
+        return
+
+    if args.dry_run:
+        for candidate in candidates[: args.count]:
+            print(format_followup_candidate(candidate))
+        return
+
+    generated: list[Path] = []
+    skipped: list[tuple[int, str]] = []
+    for candidate in candidates:
+        if len(generated) >= args.count:
+            break
+        row = candidate.row
+        print(
+            f"follow-up candidate #{row['id']} similarity={candidate.similarity:.2f}: {row['title']}",
+            file=sys.stderr,
+        )
+        context = ArticleContext(row["link"], row["link"], "", "", "not fetched")
+        if args.enrich:
+            context = fetch_article_context(row["link"])
+            if context.ok:
+                print(f"  article context fetched: {len(context.text)} chars", file=sys.stderr)
+            elif args.require_enriched:
+                print(f"  skipped: article context unavailable: {context.error}", file=sys.stderr)
+                skipped.append((row["id"], context.error))
+                continue
+
+        try:
+            output = write_followup_article(
+                candidate,
+                context,
+                args.max_output_tokens,
+                args.min_article_chars,
+                args.title_optimize,
+            )
+        except (OpenAIConfigError, OpenAIRequestError) as exc:
+            print(f"  failed: {exc}", file=sys.stderr)
+            skipped.append((row["id"], str(exc)))
+            continue
+        generated.append(output)
+        print(output)
+
+    if not generated:
+        skipped_text = "; ".join(f"#{item_id}: {reason}" for item_id, reason in skipped[:5])
+        print(f"no follow-up generated. skipped: {skipped_text}")
+        return
+    if args.publish_feed:
+        publish_articles("latest", args.base_url)
+    if args.deploy:
+        publish_articles("latest", args.base_url)
+        deploy_to_github_pages(args.base_url, args.commit_message)
+
+
+def load_published_article_seeds(
+    articles_dir: Path,
+    lookback_days: int,
+    include_followups: bool,
+) -> list[PublishedArticleSeed]:
+    cutoff = dt.datetime.now().date() - dt.timedelta(days=lookback_days)
+    seeds: list[PublishedArticleSeed] = []
+    for path in sorted(articles_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+        raw = path.read_text(encoding="utf-8")
+        if not include_followups and "## 追更来源" in raw:
+            continue
+        article_date = parse_article_file_date(path) or dt.datetime.fromtimestamp(path.stat().st_mtime).date()
+        if article_date < cutoff:
+            continue
+        article_text = section_between(raw, "## 文章", "## 发布前人工检查") or raw
+        title = extract_article_title(article_text) or extract_metadata_value(raw, "选中标题") or path.stem
+        original_title = extract_metadata_value(raw, "原标题") or title
+        link = extract_metadata_value(raw, "链接")
+        seeds.append(
+            PublishedArticleSeed(
+                path=path,
+                title=title,
+                original_title=original_title,
+                source=extract_metadata_value(raw, "来源"),
+                link=link,
+                published_at=extract_metadata_value(raw, "发布时间") or None,
+                article_text=article_text,
+                article_date=article_date,
+            )
+        )
+    return seeds
+
+
+def parse_article_file_date(path: Path) -> dt.date | None:
+    match = re.match(r"(\d{4}-\d{2}-\d{2})-", path.name)
+    if not match:
+        return None
+    try:
+        return dt.date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def extract_metadata_value(raw: str, label: str) -> str:
+    match = re.search(rf"^- {re.escape(label)}：(.+)$", raw, flags=re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def section_between(raw: str, start_marker: str, end_marker: str) -> str:
+    if start_marker not in raw:
+        return ""
+    section = raw.split(start_marker, 1)[1]
+    if end_marker in section:
+        section = section.split(end_marker, 1)[0]
+    return section.strip()
+
+
+def normalize_match_key(value: str) -> str:
+    return re.sub(r"[\W_]+", "", (value or "").lower(), flags=re.UNICODE)
+
+
+def find_followup_candidates(
+    conn: sqlite3.Connection,
+    seeds: list[PublishedArticleSeed],
+    limit: int,
+    min_score: int,
+    min_similarity: float,
+    allow_risky: bool,
+) -> list[FollowUpCandidate]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM news_items
+        WHERE score >= ?
+        ORDER BY COALESCE(published_at, fetched_at) DESC, score DESC
+        LIMIT ?
+        """,
+        (min_score, limit),
+    ).fetchall()
+    candidates: list[FollowUpCandidate] = []
+    seen_item_ids: set[int] = set()
+    for row in rows:
+        if article_exists_for_item(row["id"]):
+            continue
+        if not allow_risky and is_high_risk_topic(row):
+            continue
+        best: FollowUpCandidate | None = None
+        for seed in seeds:
+            if is_same_source_item(seed, row):
+                continue
+            if not is_newer_than_seed(seed, row):
+                continue
+            similarity, reason = followup_similarity(seed, row)
+            if similarity < min_similarity:
+                continue
+            candidate = FollowUpCandidate(seed, row, similarity, reason)
+            if best is None or candidate.similarity > best.similarity:
+                best = candidate
+        if best and row["id"] not in seen_item_ids:
+            seen_item_ids.add(row["id"])
+            candidates.append(best)
+    candidates.sort(
+        key=lambda item: (
+            item.similarity,
+            item.row["score"],
+            item.row["published_at"] or "",
+        ),
+        reverse=True,
+    )
+    return candidates
+
+
+def is_same_source_item(seed: PublishedArticleSeed, row: sqlite3.Row) -> bool:
+    seed_link = normalize_match_key(seed.link)
+    row_link = normalize_match_key(row["link"])
+    if seed_link and seed_link == row_link:
+        return True
+    seed_title = normalize_match_key(seed.original_title)
+    row_title = normalize_match_key(row["title"])
+    return bool(seed_title and seed_title == row_title)
+
+
+def is_newer_than_seed(seed: PublishedArticleSeed, row: sqlite3.Row) -> bool:
+    row_time = parse_iso_datetime(row["published_at"]) or parse_iso_datetime(row["fetched_at"])
+    seed_time = parse_iso_datetime(seed.published_at)
+    if seed_time is None:
+        seed_time = dt.datetime.combine(seed.article_date, dt.time.min, tzinfo=dt.timezone.utc)
+    if row_time is None:
+        return True
+    return row_time > seed_time + dt.timedelta(hours=3)
+
+
+def parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value or value in {"待核实", "未知"}:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def followup_similarity(seed: PublishedArticleSeed, row: sqlite3.Row) -> tuple[float, str]:
+    seed_text = f"{seed.original_title} {seed.title}"
+    row_text = f"{row['title']} {row['summary'] or ''}"
+    seed_key = normalize_match_key(seed_text)
+    row_key = normalize_match_key(row_text)
+    sequence_ratio = SequenceMatcher(None, seed_key, row_key).ratio() if seed_key and row_key else 0.0
+    seed_tokens = topic_tokens(seed_text)
+    row_tokens = topic_tokens(row_text)
+    overlap = seed_tokens & row_tokens
+    if not overlap and sequence_ratio < 0.45:
+        return 0.0, f"sequence={sequence_ratio:.2f}, no topic overlap"
+    if len(overlap) < 2 and sequence_ratio < 0.42:
+        return 0.0, f"sequence={sequence_ratio:.2f}, weak topic overlap={', '.join(sorted(overlap)) or 'none'}"
+    union = seed_tokens | row_tokens
+    token_ratio = len(overlap) / len(union) if union else 0.0
+    entity_ratio = len({token for token in overlap if len(token) >= 4}) / max(
+        1,
+        len({token for token in seed_tokens if len(token) >= 4}),
+    )
+    similarity = max(sequence_ratio, token_ratio * 0.55 + entity_ratio * 0.45)
+    if seed.source and seed.source == row["source"]:
+        similarity += 0.04
+    similarity = min(1.0, similarity)
+    reason = (
+        f"sequence={sequence_ratio:.2f}, token={token_ratio:.2f}, "
+        f"entity={entity_ratio:.2f}, overlap={', '.join(sorted(overlap)[:8]) or 'none'}"
+    )
+    return similarity, reason
+
+
+def topic_tokens(value: str) -> set[str]:
+    value = value.lower()
+    english = re.findall(r"[a-z][a-z0-9-]{2,}", value)
+    chinese_chunks = re.findall(r"[\u4e00-\u9fff]{2,}", value)
+    chinese_grams: list[str] = []
+    for chunk in chinese_chunks:
+        if len(chunk) <= 4:
+            chinese_grams.append(chunk)
+        else:
+            chinese_grams.extend(chunk[index : index + 2] for index in range(len(chunk) - 1))
+            chinese_grams.extend(chunk[index : index + 3] for index in range(len(chunk) - 2))
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "after",
+        "over",
+        "this",
+        "that",
+        "what",
+        "why",
+        "how",
+        "china",
+        "chinese",
+        "中国",
+        "为何",
+        "什么",
+        "影响",
+        "背后",
+        "一个",
+        "这件",
+        "普通人",
+    }
+    return {token for token in [*english, *chinese_grams] if token not in stopwords}
+
+
+def format_followup_candidate(candidate: FollowUpCandidate) -> str:
+    row = candidate.row
+    return (
+        f"#{row['id']} similarity={candidate.similarity:.2f} score={row['score']} "
+        f"seed={candidate.seed.title} -> {row['title']}\n"
+        f"    reason: {candidate.reason}\n"
+        f"    link: {row['link']}"
+    )
+
+
+@dataclass
 class TitleCandidate:
     title: str
     score: int = 0
@@ -878,6 +1198,172 @@ def write_final_article(
 """
     output.write_text(content, encoding="utf-8")
     return output
+
+
+def write_followup_article(
+    candidate: FollowUpCandidate,
+    article_context: ArticleContext,
+    max_output_tokens: int,
+    min_article_chars: int,
+    optimize_title: bool = True,
+) -> Path:
+    row = candidate.row
+    detail = json.loads(row["score_detail"])
+    text = build_followup_article(
+        candidate,
+        article_context,
+        max_output_tokens,
+        min_article_chars,
+    )
+    if has_placeholder_body(text):
+        text = build_followup_article(
+            candidate,
+            article_context,
+            max(max_output_tokens, 3200),
+            min_article_chars,
+        )
+    text = correct_numeric_errors(text, article_context)
+    article_len = article_char_count(text)
+    expand_attempts = 0
+    while article_len < min_article_chars and expand_attempts < 3:
+        expand_attempts += 1
+        print(
+            f"  follow-up article too short: {article_len} chars, expanding to at least {min_article_chars}",
+            file=sys.stderr,
+        )
+        text = expand_final_article(
+            row,
+            article_context,
+            text,
+            min_article_chars,
+            max(max_output_tokens, 3200),
+        )
+        text = correct_numeric_errors(text, article_context)
+        article_len = article_char_count(text)
+    if article_len < min_article_chars:
+        raise OpenAIRequestError(
+            f"generated follow-up article is still too short after expansion: {article_len} < {min_article_chars}"
+        )
+
+    title_result = TitleOptimizationResult.from_article_text(text)
+    if optimize_title:
+        try:
+            title_result = optimize_article_title(row, article_context, text, max_output_tokens=900)
+            text = replace_article_title(text, title_result.selected)
+            print(f"  selected follow-up title: {title_result.selected}", file=sys.stderr)
+        except OpenAIRequestError as exc:
+            print(f"  title optimization skipped: {exc}", file=sys.stderr)
+            text = replace_article_title(text, title_result.selected)
+
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    filename = f"{today}-{row['id']}-followup-{safe_filename(title_result.selected)}.md"
+    ARTICLES_DIR.mkdir(exist_ok=True)
+    output = ARTICLES_DIR / filename
+    title_metadata = title_result.to_markdown()
+    seed = candidate.seed
+    content = f"""# 自动追更文章
+
+## 追更来源
+
+- 上一篇文章：{seed.title}
+- 上一篇文件：{seed.path}
+- 上一篇原始标题：{seed.original_title}
+- 上一篇链接：{seed.link or '未知'}
+- 新进展标题：{row['title']}
+- 新进展来源：{row['source']}
+- 新进展链接：{row['link']}
+- 新进展最终链接：{article_context.final_url if article_context.final_url != row['link'] else '同上'}
+- 新进展抓取：{'成功' if article_context.ok else article_context.error}
+- 新进展发布时间：{row['published_at'] or '待核实'}
+- 追更相似度：{candidate.similarity:.2f}
+- 追更判断：{candidate.reason}
+- 选题评分：{row['score']} / 30
+- 评分明细：{json.dumps(detail, ensure_ascii=False)}
+- 文章长度：{article_len} 字符
+- 最低要求：{min_article_chars} 字符
+
+{title_metadata}
+
+## 文章
+
+{text}
+
+## 发布前人工检查
+
+- [ ] 确认这确实是同一事件的新进展
+- [ ] 至少核对 2 个可靠来源
+- [ ] 删除未证实指控、煽动表达和夸张标题
+- [ ] 确认事实、金额、机构名、人名无误
+- [ ] 确认没有重复上一篇正文
+- [ ] 确认适合今日头条发布
+"""
+    output.write_text(content, encoding="utf-8")
+    return output
+
+
+def build_followup_article(
+    candidate: FollowUpCandidate,
+    article_context: ArticleContext,
+    max_output_tokens: int,
+    min_article_chars: int,
+) -> str:
+    row = candidate.row
+    seed = candidate.seed
+    instructions = """你是一个谨慎、平实的中文追更文章编辑，服务于今日头条图文创作者。
+账号定位：普通人看懂中外热点背后的影响。
+请直接输出完整 Markdown 文章，不要输出创作说明、过程、大纲或占位语。
+这是“追更/后续解读”，必须突出新进展，不能简单重复上一篇文章。
+必须区分事实与判断；不编造未提供的信息；不确定内容要写“仍需观察”或“需要进一步确认”。
+涉及金额、数量、日期、机构名、人名时，必须严格照抄材料中的表达；不要自行换算、扩大单位或改写数字。
+避免标题党、煽动性表达、阴谋论、投资建议和医疗法律等专业建议。"""
+    article_status = "成功" if article_context.ok else article_context.error
+    user_input = f"""请根据以下材料，写一篇不少于 {min_article_chars} 个中文字符的追更文章，建议 1200-1800 字。
+
+上一篇文章标题：{seed.title}
+上一篇原始标题：{seed.original_title}
+上一篇来源：{seed.source or '未知'}
+上一篇链接：{seed.link or '未知'}
+上一篇发布时间：{seed.published_at or '未知'}
+
+上一篇正文摘录：
+{seed.article_text[:2600]}
+
+这次新进展标题：{row['title']}
+来源：{row['source']}
+链接：{row['link']}
+最终链接：{article_context.final_url}
+发布时间：{row['published_at'] or '未知'}
+摘要：{row['summary'] or '无摘要'}
+本地评分：{row['score']} / 30
+评分明细：{row['score_detail']}
+追更相似度：{candidate.similarity:.2f}
+追更判断：{candidate.reason}
+原文抓取状态：{article_status}
+
+可核验页面标题：
+{article_context.title or '无'}
+
+可核验页面文本：
+{article_context.excerpt(7000) or '无。请明确提醒读者该信息仍需人工补充来源，不要补写具体细节。'}
+
+输出格式：
+# 标题
+标题体现“新进展”或“后续影响”，不超过 30 字，不能夸张。
+
+正文结构：
+1. 开头：80-120 字说清这次新进展和为什么值得追更
+2. 和上一篇相比，新信息是什么：列出材料支持的新事实
+3. 为什么它说明事件还在发酵：解释变化、影响或后续连锁反应
+4. 对普通人有什么影响：从生活、消费、产业、规则、就业或国际关系中选择合适角度
+5. 接下来关注什么：给 2-3 个观察点
+6. 结尾：一句有辨识度的总结
+
+必须直接写完整文章，不要写“此处省略”“请根据大纲撰写”。文章长度必须不小于 {min_article_chars} 个中文字符。"""
+    return generate_text(
+        instructions=instructions,
+        user_input=user_input,
+        max_output_tokens=max_output_tokens,
+    )
 
 
 def cmd_publish(args: argparse.Namespace) -> None:
@@ -1218,6 +1704,56 @@ def main() -> None:
         title_optimize=True,
     )
     auto_parser.set_defaults(func=cmd_auto)
+
+    followup_parser = subparsers.add_parser(
+        "followup",
+        help="检查已发热点是否发酵，并生成后续解读",
+    )
+    followup_parser.add_argument("--count", type=int, default=1, help="最多生成追更文章数量")
+    followup_parser.add_argument("--lookback-days", type=int, default=5, help="检查最近几天已发文章")
+    followup_parser.add_argument("--candidate-limit", type=int, default=120, help="最多检查多少条最新热点")
+    followup_parser.add_argument("--min-score", type=int, default=21, help="新进展最低选题评分")
+    followup_parser.add_argument("--min-similarity", type=float, default=0.34, help="同一事件最低相似度")
+    followup_parser.add_argument("--no-fetch", dest="fetch", action="store_false", help="不先抓取最新热点")
+    followup_parser.add_argument("--dry-run", action="store_true", help="只输出追更候选，不生成文章")
+    followup_parser.add_argument(
+        "--include-followups",
+        action="store_true",
+        help="允许基于追更文章继续追更，默认只追踪原始文章",
+    )
+    followup_parser.add_argument(
+        "--no-enrich",
+        dest="enrich",
+        action="store_false",
+        help="不抓取新进展原文页面，只使用 RSS 标题和摘要",
+    )
+    followup_parser.add_argument(
+        "--allow-unenriched",
+        dest="require_enriched",
+        action="store_false",
+        help="新进展原文抓取失败时也允许生成追更",
+    )
+    followup_parser.add_argument("--allow-risky", action="store_true", help="允许战争、冲突、伤亡等高风险追更")
+    followup_parser.add_argument("--max-output-tokens", type=int, default=2800)
+    followup_parser.add_argument("--min-article-chars", type=int, default=1000, help="追更文章最低字符数")
+    followup_parser.add_argument(
+        "--no-title-optimize",
+        dest="title_optimize",
+        action="store_false",
+        help="不生成 5 个标题候选，直接使用正文原始标题",
+    )
+    followup_parser.add_argument("--publish-feed", action="store_true", help="生成追更后同步更新 public/feed.xml")
+    followup_parser.add_argument("--deploy", action="store_true", help="生成追更后提交并推送到 GitHub Pages")
+    followup_parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="公网发布根地址")
+    followup_parser.add_argument("--commit-message", default="Add follow-up article", help="自动部署的 git commit 信息")
+    followup_parser.set_defaults(
+        fetch=True,
+        enrich=True,
+        require_enriched=True,
+        allow_risky=False,
+        title_optimize=True,
+    )
+    followup_parser.set_defaults(func=cmd_followup)
 
     metrics_template_parser = subparsers.add_parser(
         "metrics-template",

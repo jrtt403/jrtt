@@ -58,6 +58,18 @@ python3 src/jrtt/cli.py auto --count 1 --min-article-chars 1500
 python3 src/jrtt/cli.py auto --count 1 --no-title-optimize
 ```
 
+检查近几天已发文章是否有同一热点的新进展，可以先 dry-run 查看候选：
+
+```bash
+python3 src/jrtt/cli.py followup --dry-run --count 3
+```
+
+确认后自动生成后续解读：
+
+```bash
+python3 src/jrtt/cli.py followup --count 1
+```
+
 自动生成的完整文章会输出到：
 
 ```text
@@ -149,9 +161,11 @@ python3 scripts/toutiao_publish_playwright.py --headless --confirm-publish
 scripts/toutiao_auto_publish.sh
 ```
 
-默认每天批量生成并发布 10 篇文章：5 篇国际热点、5 篇国内/中国热点，每篇不少于 1000 字，并自动生成 5 个标题候选后选择最优标题。可以用环境变量调整：
+默认每天会先检查已发热点是否发酵，最多补 1 篇后续解读；然后批量生成并发布 10 篇常规文章：5 篇国际热点、5 篇国内/中国热点，每篇不少于 1000 字，并自动生成 5 个标题候选后选择最优标题。可以用环境变量调整：
 
 ```bash
+JRTT_FOLLOWUP_COUNT=1 \
+JRTT_FOLLOWUP_MIN_SIMILARITY=0.34 \
 JRTT_INTERNATIONAL_COUNT=5 \
 JRTT_CHINA_COUNT=5 \
 JRTT_CANDIDATE_LIMIT=50 \

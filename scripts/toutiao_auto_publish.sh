@@ -10,22 +10,40 @@ fi
 
 international_count="${JRTT_INTERNATIONAL_COUNT:-5}"
 china_count="${JRTT_CHINA_COUNT:-5}"
+followup_count="${JRTT_FOLLOWUP_COUNT:-1}"
 candidate_limit="${JRTT_CANDIDATE_LIMIT:-50}"
 min_chars="${JRTT_MIN_ARTICLE_CHARS:-1000}"
 international_min_score="${JRTT_INTERNATIONAL_MIN_SCORE:-23}"
 china_min_score="${JRTT_CHINA_MIN_SCORE:-21}"
+followup_min_score="${JRTT_FOLLOWUP_MIN_SCORE:-21}"
+followup_min_similarity="${JRTT_FOLLOWUP_MIN_SIMILARITY:-0.34}"
 allow_unenriched_arg=""
 if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
   allow_unenriched_arg="--allow-unenriched"
 fi
+auto_fetch_arg=()
+if [[ "$followup_count" -gt 0 ]]; then
+  auto_fetch_arg=(--no-fetch)
+fi
 
 generated_output="$({
+if [[ "$followup_count" -gt 0 ]]; then
+"$python_bin" src/jrtt/cli.py followup \
+  --count "$followup_count" \
+  --candidate-limit "${JRTT_FOLLOWUP_CANDIDATE_LIMIT:-120}" \
+  --min-score "$followup_min_score" \
+  --min-similarity "$followup_min_similarity" \
+  --min-article-chars "$min_chars" \
+  ${allow_unenriched_arg:+$allow_unenriched_arg}
+fi
+
 "$python_bin" src/jrtt/cli.py auto \
   --count "$international_count" \
   --category international \
   --candidate-limit "$candidate_limit" \
   --min-score "$international_min_score" \
   --min-article-chars "$min_chars" \
+  "${auto_fetch_arg[@]}" \
   ${allow_unenriched_arg:+$allow_unenriched_arg}
 
 "$python_bin" src/jrtt/cli.py auto \
