@@ -7,9 +7,11 @@ international_count="${JRTT_INTERNATIONAL_COUNT:-5}"
 china_count="${JRTT_CHINA_COUNT:-5}"
 candidate_limit="${JRTT_CANDIDATE_LIMIT:-50}"
 min_chars="${JRTT_MIN_ARTICLE_CHARS:-1000}"
-allow_unenriched=()
+international_min_score="${JRTT_INTERNATIONAL_MIN_SCORE:-23}"
+china_min_score="${JRTT_CHINA_MIN_SCORE:-21}"
+allow_unenriched_arg=""
 if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
-  allow_unenriched=(--allow-unenriched)
+  allow_unenriched_arg="--allow-unenriched"
 fi
 
 generated_output="$({
@@ -17,16 +19,18 @@ python3 src/jrtt/cli.py auto \
   --count "$international_count" \
   --category international \
   --candidate-limit "$candidate_limit" \
+  --min-score "$international_min_score" \
   --min-article-chars "$min_chars" \
-  "${allow_unenriched[@]}"
+  ${allow_unenriched_arg:+$allow_unenriched_arg}
 
 python3 src/jrtt/cli.py auto \
   --count "$china_count" \
   --category china \
   --candidate-limit "$candidate_limit" \
+  --min-score "$china_min_score" \
   --min-article-chars "$min_chars" \
   --no-fetch \
-  "${allow_unenriched[@]}"
+  ${allow_unenriched_arg:+$allow_unenriched_arg}
 })"
 printf '%s\n' "$generated_output"
 
