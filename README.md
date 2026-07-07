@@ -141,6 +141,21 @@ python3 scripts/toutiao_publish_playwright.py --headless --confirm-publish
 scripts/toutiao_auto_publish.sh
 ```
 
+默认每天批量生成并发布 10 篇文章，每篇不少于 1000 字。可以用环境变量调整：
+
+```bash
+JRTT_AUTO_COUNT=10 \
+JRTT_CANDIDATE_LIMIT=50 \
+JRTT_TOUTIAO_INTERVAL_SECONDS=120 \
+scripts/toutiao_auto_publish.sh
+```
+
+定时任务默认使用无头浏览器；首次登录或排查问题时可以强制打开可见浏览器：
+
+```bash
+JRTT_TOUTIAO_HEADLESS=0 scripts/toutiao_auto_publish.sh
+```
+
 注意：这是非官方浏览器自动化，不等于官方 API。登录过期、验证码、风控、后台改版、封面要求变化都可能导致失败；失败时会保存截图到 `data/toutiao_last.png`。
 
 没有公网域名时，可以用 GitHub Pages 免费二级域名托管内容源：
