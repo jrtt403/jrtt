@@ -468,6 +468,7 @@ def cmd_auto(args: argparse.Namespace) -> None:
         args.min_score,
         args.require_enriched,
         args.allow_risky,
+        args.category,
     )
     if not rows:
         raise SystemExit("no suitable candidates found")
@@ -520,17 +521,26 @@ def find_auto_candidates(
     min_score: int,
     require_enriched: bool,
     allow_risky: bool,
+    category: str | None = None,
 ) -> list[sqlite3.Row]:
+    category_filter = ""
+    params: list[object] = [min_score]
+    if category:
+        category_filter = "AND category = ?"
+        params.append(category)
+    params.append(limit)
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM news_items
         WHERE score >= ?
+        {category_filter}
         ORDER BY score DESC, COALESCE(published_at, fetched_at) DESC
         LIMIT ?
         """,
-        (min_score, limit),
+        params,
     ).fetchall()
+    rows = [row for row in rows if not article_exists_for_item(row["id"])]
     if not allow_risky:
         rows = [row for row in rows if not is_high_risk_topic(row)]
     if not require_enriched:
@@ -540,6 +550,10 @@ def find_auto_candidates(
     preferred = [row for row in rows if "news.google.com" not in row["link"]]
     fallback = [row for row in rows if "news.google.com" in row["link"]]
     return preferred + fallback
+
+
+def article_exists_for_item(item_id: int) -> bool:
+    return any(ARTICLES_DIR.glob(f"*-{item_id}-*.md"))
 
 
 def is_high_risk_topic(row: sqlite3.Row) -> bool:
@@ -935,6 +949,7 @@ def main() -> None:
 
     auto_parser = subparsers.add_parser("auto", help="自动抓取、选题并生成完整文章")
     auto_parser.add_argument("--count", type=int, default=1, help="生成文章数量")
+    auto_parser.add_argument("--category", choices=["international", "china"], help="只生成指定分类")
     auto_parser.add_argument("--candidate-limit", type=int, default=20, help="最多检查多少个候选选题")
     auto_parser.add_argument("--min-score", type=int, default=23, help="最低选题评分")
     auto_parser.add_argument("--no-fetch", dest="fetch", action="store_false", help="不先抓取最新热点")

@@ -141,10 +141,11 @@ python3 scripts/toutiao_publish_playwright.py --headless --confirm-publish
 scripts/toutiao_auto_publish.sh
 ```
 
-默认每天批量生成并发布 10 篇文章，每篇不少于 1000 字。可以用环境变量调整：
+默认每天批量生成并发布 10 篇文章：5 篇国际热点、5 篇国内/中国热点，每篇不少于 1000 字。可以用环境变量调整：
 
 ```bash
-JRTT_AUTO_COUNT=10 \
+JRTT_INTERNATIONAL_COUNT=5 \
+JRTT_CHINA_COUNT=5 \
 JRTT_CANDIDATE_LIMIT=50 \
 JRTT_TOUTIAO_INTERVAL_SECONDS=120 \
 scripts/toutiao_auto_publish.sh

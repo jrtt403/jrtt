@@ -3,13 +3,31 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-generated_output="$(
+international_count="${JRTT_INTERNATIONAL_COUNT:-5}"
+china_count="${JRTT_CHINA_COUNT:-5}"
+candidate_limit="${JRTT_CANDIDATE_LIMIT:-50}"
+min_chars="${JRTT_MIN_ARTICLE_CHARS:-1000}"
+allow_unenriched=()
+if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
+  allow_unenriched=(--allow-unenriched)
+fi
+
+generated_output="$({
 python3 src/jrtt/cli.py auto \
-  --count "${JRTT_AUTO_COUNT:-10}" \
-  --candidate-limit "${JRTT_CANDIDATE_LIMIT:-50}" \
-  --min-article-chars "${JRTT_MIN_ARTICLE_CHARS:-1000}" \
-  ${JRTT_ALLOW_UNENRICHED:+--allow-unenriched}
-)"
+  --count "$international_count" \
+  --category international \
+  --candidate-limit "$candidate_limit" \
+  --min-article-chars "$min_chars" \
+  "${allow_unenriched[@]}"
+
+python3 src/jrtt/cli.py auto \
+  --count "$china_count" \
+  --category china \
+  --candidate-limit "$candidate_limit" \
+  --min-article-chars "$min_chars" \
+  --no-fetch \
+  "${allow_unenriched[@]}"
+})"
 printf '%s\n' "$generated_output"
 
 articles=()
