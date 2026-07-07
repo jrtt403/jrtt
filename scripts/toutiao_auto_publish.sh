@@ -3,6 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+python_bin="${JRTT_PYTHON:-python3}"
+if [[ -x ".venv/bin/python" && -z "${JRTT_PYTHON:-}" ]]; then
+  python_bin=".venv/bin/python"
+fi
+
 international_count="${JRTT_INTERNATIONAL_COUNT:-5}"
 china_count="${JRTT_CHINA_COUNT:-5}"
 candidate_limit="${JRTT_CANDIDATE_LIMIT:-50}"
@@ -15,7 +20,7 @@ if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
 fi
 
 generated_output="$({
-python3 src/jrtt/cli.py auto \
+"$python_bin" src/jrtt/cli.py auto \
   --count "$international_count" \
   --category international \
   --candidate-limit "$candidate_limit" \
@@ -23,7 +28,7 @@ python3 src/jrtt/cli.py auto \
   --min-article-chars "$min_chars" \
   ${allow_unenriched_arg:+$allow_unenriched_arg}
 
-python3 src/jrtt/cli.py auto \
+"$python_bin" src/jrtt/cli.py auto \
   --count "$china_count" \
   --category china \
   --candidate-limit "$candidate_limit" \
@@ -46,7 +51,7 @@ if [[ "${#articles[@]}" -eq 0 ]]; then
   exit 1
 fi
 
-python3 src/jrtt/cli.py deploy \
+"$python_bin" src/jrtt/cli.py deploy \
   --article all \
   --message "${JRTT_COMMIT_MESSAGE:-Auto publish generated articles}"
 
@@ -59,7 +64,7 @@ interval="${JRTT_TOUTIAO_INTERVAL_SECONDS:-120}"
 for index in "${!articles[@]}"; do
   article="${articles[$index]}"
   echo "Publishing to Toutiao [$((index + 1))/${#articles[@]}]: $article"
-  python3 scripts/toutiao_publish_playwright.py \
+  "$python_bin" scripts/toutiao_publish_playwright.py \
     --article "$article" \
     --confirm-publish \
     "${headless_arg[@]}"

@@ -114,13 +114,35 @@ def fill_textbox(page, locator, value: str) -> None:
         page.keyboard.type(value)
 
 
-def ensure_logged_in(page) -> None:
+def ensure_logged_in(page, login_wait_seconds: int = 0) -> None:
+    if not is_login_page(page):
+        return
+    if login_wait_seconds > 0:
+        print(
+            f"Toutiao login required. Complete login in the opened browser within "
+            f"{login_wait_seconds}s...",
+            file=sys.stderr,
+        )
+        deadline = time.time() + login_wait_seconds
+        while time.time() < deadline:
+            page.wait_for_timeout(1000)
+            if not is_login_page(page):
+                page.goto(PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(3000)
+                if not is_login_page(page):
+                    return
+        raise RuntimeError("Toutiao login timed out.")
+    raise RuntimeError("Toutiao redirected to login. Re-run with --login-wait-seconds and log in.")
+
+
+def is_login_page(page) -> bool:
     current = page.url
     login_markers = ["login", "passport", "sso"]
     if any(marker in current.lower() for marker in login_markers):
-        raise RuntimeError("Toutiao redirected to login. Re-run without --headless and log in.")
+        return True
     if page.get_by_text("登录", exact=True).count() and not page.get_by_text("预览并发布").count():
-        raise RuntimeError("Toutiao appears to be logged out. Re-run without --headless and log in.")
+        return True
+    return False
 
 
 def maybe_click(page, text: str, timeout_ms: int = 2500) -> bool:
@@ -170,7 +192,7 @@ def publish_to_toutiao(args: argparse.Namespace) -> None:
         try:
             page.goto(PUBLISH_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
-            ensure_logged_in(page)
+            ensure_logged_in(page, args.login_wait_seconds)
 
             fill_editor(page, title, body)
             wait_for_draft_saved(page)
@@ -201,6 +223,13 @@ def publish_to_toutiao(args: argparse.Namespace) -> None:
             print(f"title={title}")
             print(f"body_chars={body_chars}")
             print(f"screenshot={args.screenshot}")
+        except Exception:
+            try:
+                page.screenshot(path=str(args.screenshot), full_page=True)
+                print(f"screenshot={args.screenshot}", file=sys.stderr)
+            except Exception as screenshot_error:
+                print(f"failed to save screenshot: {screenshot_error}", file=sys.stderr)
+            raise
         finally:
             context.close()
 
@@ -211,6 +240,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-dir", type=Path, default=DEFAULT_PROFILE_DIR)
     parser.add_argument("--screenshot", type=Path, default=DEFAULT_SCREENSHOT)
     parser.add_argument("--headless", action="store_true", help="run without visible browser UI")
+    parser.add_argument(
+        "--login-wait-seconds",
+        type=int,
+        default=0,
+        help="when logged out in headed mode, wait this long for manual login",
+    )
     parser.add_argument(
         "--confirm-publish",
         action="store_true",
