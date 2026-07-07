@@ -50,6 +50,14 @@ python3 src/jrtt/cli.py auto --count 1
 python3 src/jrtt/cli.py auto --count 1 --min-article-chars 1500
 ```
 
+`auto` 默认会额外生成 5 个标题候选，并自动选择 1 个不超过 30 字、适合今日头条标题输入框的标题作为正文 H1。候选标题会记录在文章的 `标题优化` 区域，发布到头条时只使用选中的标题。
+
+如果临时不想优化标题，可以关闭：
+
+```bash
+python3 src/jrtt/cli.py auto --count 1 --no-title-optimize
+```
+
 自动生成的完整文章会输出到：
 
 ```text
@@ -141,7 +149,7 @@ python3 scripts/toutiao_publish_playwright.py --headless --confirm-publish
 scripts/toutiao_auto_publish.sh
 ```
 
-默认每天批量生成并发布 10 篇文章：5 篇国际热点、5 篇国内/中国热点，每篇不少于 1000 字。可以用环境变量调整：
+默认每天批量生成并发布 10 篇文章：5 篇国际热点、5 篇国内/中国热点，每篇不少于 1000 字，并自动生成 5 个标题候选后选择最优标题。可以用环境变量调整：
 
 ```bash
 JRTT_INTERNATIONAL_COUNT=5 \

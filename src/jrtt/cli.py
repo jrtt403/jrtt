@@ -15,6 +15,7 @@ import subprocess
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -497,6 +498,7 @@ def cmd_auto(args: argparse.Namespace) -> None:
                 context,
                 args.max_output_tokens,
                 args.min_article_chars,
+                args.title_optimize,
             )
         except (OpenAIConfigError, OpenAIRequestError) as exc:
             print(f"  failed: {exc}", file=sys.stderr)
@@ -604,11 +606,181 @@ def is_high_risk_topic(row: sqlite3.Row) -> bool:
     return any(term in text for term in high_risk_terms)
 
 
+@dataclass
+class TitleCandidate:
+    title: str
+    score: int = 0
+    reason: str = ""
+
+
+@dataclass
+class TitleOptimizationResult:
+    selected: str
+    candidates: list[TitleCandidate]
+
+    @classmethod
+    def from_article_text(cls, text: str) -> "TitleOptimizationResult":
+        title = normalize_title(extract_article_title(text) or "自动生成文章")
+        return cls(title, [TitleCandidate(title, 0, "正文原始标题")])
+
+    def to_markdown(self) -> str:
+        lines = ["## 标题优化", "", f"- 选中标题：{self.selected}", "- 候选标题："]
+        for index, candidate in enumerate(self.candidates, start=1):
+            reason = f"；{candidate.reason}" if candidate.reason else ""
+            score = f"{candidate.score}分" if candidate.score else "未评分"
+            lines.append(f"  {index}. {candidate.title}（{score}{reason}）")
+        return "\n".join(lines)
+
+
+def extract_article_title(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip()
+    return ""
+
+
+def replace_article_title(text: str, title: str) -> str:
+    title = normalize_title(title)
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().startswith("# "):
+            lines[index] = f"# {title}"
+            return "\n".join(lines).strip()
+    return f"# {title}\n\n{text.strip()}"
+
+
+def normalize_title(title: str, max_chars: int = 30) -> str:
+    title = re.sub(r"^[#\s：:、，。.!！?？\"'“”‘’]+", "", title.strip())
+    title = re.sub(r"\s+", "", title)
+    title = title.strip("：:、，。.!！?？\"'“”‘’")
+    if not title:
+        return "自动生成文章"
+    if len(title) <= max_chars:
+        return title
+    return title[:max_chars].rstrip("：:、，。.!！?？\"'“”‘’")
+
+
+def optimize_article_title(
+    row: sqlite3.Row,
+    article_context: ArticleContext,
+    article_text: str,
+    max_output_tokens: int,
+) -> TitleOptimizationResult:
+    current_title = normalize_title(extract_article_title(article_text) or row["title"])
+    instructions = """你是今日头条图文标题编辑。
+目标是提升自然点击率和完读预期，但必须合规、克制、准确。
+只能基于给定材料拟标题，不得编造未出现的事实、数字、人名、因果和结论。
+禁止标题党、震惊体、煽动、阴谋论、绝对化承诺。
+每个标题必须不超过 30 个字符，不能用省略号截断。
+请只输出 JSON，不要输出 Markdown。"""
+    user_input = f"""请为下面文章生成 5 个今日头条标题候选，并选择 1 个最优标题。
+
+原始 RSS 标题：{row['title']}
+当前文章标题：{current_title}
+来源：{row['source']}
+摘要：{row['summary'] or '无摘要'}
+原文抓取状态：{'成功' if article_context.ok else article_context.error}
+可核验页面标题：{article_context.title or '无'}
+
+文章正文：
+{article_text[:3500]}
+
+评分标准：
+1. 事实准确，不能超过材料
+2. 30 字以内，适合头条标题输入框
+3. 让普通人知道“为什么值得点开”
+4. 避免空泛、夸张、营销号语气
+
+输出 JSON 格式：
+{{
+  "selected": "最终标题",
+  "candidates": [
+    {{"title": "标题1", "score": 90, "reason": "选择理由"}},
+    {{"title": "标题2", "score": 86, "reason": "选择理由"}}
+  ]
+}}"""
+    raw = generate_text(instructions, user_input, max_output_tokens=max_output_tokens)
+    data = parse_json_object(raw)
+    candidates = parse_title_candidates(data)
+    if not candidates:
+        raise OpenAIRequestError("title optimization returned no usable candidates")
+    selected = normalize_title(str(data.get("selected") or candidates[0].title))
+    candidate_titles = {candidate.title for candidate in candidates}
+    if selected not in candidate_titles:
+        candidates.insert(0, TitleCandidate(selected, 0, "模型选中标题"))
+    candidates = dedupe_title_candidates(candidates)[:5]
+    selected = choose_title(selected, candidates)
+    return TitleOptimizationResult(selected, candidates)
+
+
+def parse_json_object(raw: str) -> dict:
+    cleaned = raw.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise OpenAIRequestError("title optimization response was not JSON")
+    try:
+        value = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError as exc:
+        raise OpenAIRequestError(f"title optimization JSON parse failed: {exc}") from exc
+    if not isinstance(value, dict):
+        raise OpenAIRequestError("title optimization JSON was not an object")
+    return value
+
+
+def parse_title_candidates(data: dict) -> list[TitleCandidate]:
+    raw_candidates = data.get("candidates", [])
+    if not isinstance(raw_candidates, list):
+        return []
+    candidates: list[TitleCandidate] = []
+    for item in raw_candidates:
+        if not isinstance(item, dict):
+            continue
+        title = normalize_title(str(item.get("title") or ""))
+        if not title or title == "自动生成文章":
+            continue
+        score_match = re.search(r"\d+", str(item.get("score") or ""))
+        score = int(score_match.group(0)) if score_match else 0
+        reason = normalize_space(str(item.get("reason") or ""))[:80]
+        candidates.append(TitleCandidate(title, score, reason))
+    return dedupe_title_candidates(candidates)
+
+
+def dedupe_title_candidates(candidates: list[TitleCandidate]) -> list[TitleCandidate]:
+    seen: set[str] = set()
+    result: list[TitleCandidate] = []
+    for candidate in candidates:
+        key = re.sub(r"\W+", "", candidate.title.lower())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(candidate)
+    return result
+
+
+def choose_title(selected: str, candidates: list[TitleCandidate]) -> str:
+    selected = normalize_title(selected)
+    usable = [candidate for candidate in candidates if len(candidate.title) <= 30]
+    if any(candidate.title == selected for candidate in usable):
+        return selected
+    if usable:
+        return max(usable, key=lambda candidate: candidate.score).title
+    return normalize_title(selected)
+
+
+def normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def write_final_article(
     row: sqlite3.Row,
     article_context: ArticleContext,
     max_output_tokens: int,
     min_article_chars: int,
+    optimize_title: bool = True,
 ) -> Path:
     detail = json.loads(row["score_detail"])
     text = build_final_article(row, detail, article_context, max_output_tokens, min_article_chars)
@@ -637,10 +809,21 @@ def write_final_article(
             f"generated article is still too short after expansion: {article_len} < {min_article_chars}"
         )
 
+    title_result = TitleOptimizationResult.from_article_text(text)
+    if optimize_title:
+        try:
+            title_result = optimize_article_title(row, article_context, text, max_output_tokens=900)
+            text = replace_article_title(text, title_result.selected)
+            print(f"  selected title: {title_result.selected}", file=sys.stderr)
+        except OpenAIRequestError as exc:
+            print(f"  title optimization skipped: {exc}", file=sys.stderr)
+            text = replace_article_title(text, title_result.selected)
+
     today = dt.datetime.now().strftime("%Y-%m-%d")
-    filename = f"{today}-{row['id']}-{safe_filename(row['title'])}.md"
+    filename = f"{today}-{row['id']}-{safe_filename(title_result.selected)}.md"
     ARTICLES_DIR.mkdir(exist_ok=True)
     output = ARTICLES_DIR / filename
+    title_metadata = title_result.to_markdown()
     content = f"""# 自动生成文章
 
 ## 选题来源
@@ -655,6 +838,8 @@ def write_final_article(
 - 评分明细：{json.dumps(detail, ensure_ascii=False)}
 - 文章长度：{article_len} 字符
 - 最低要求：{min_article_chars} 字符
+
+{title_metadata}
 
 ## 文章
 
@@ -968,11 +1153,23 @@ def main() -> None:
     auto_parser.add_argument("--allow-risky", action="store_true", help="允许战争、冲突、伤亡等高风险选题")
     auto_parser.add_argument("--max-output-tokens", type=int, default=2600)
     auto_parser.add_argument("--min-article-chars", type=int, default=1000, help="生成文章最低字符数")
+    auto_parser.add_argument(
+        "--no-title-optimize",
+        dest="title_optimize",
+        action="store_false",
+        help="不生成 5 个标题候选，直接使用正文原始标题",
+    )
     auto_parser.add_argument("--publish-feed", action="store_true", help="生成文章后同步更新 public/feed.xml")
     auto_parser.add_argument("--deploy", action="store_true", help="生成文章后提交并推送到 GitHub Pages")
     auto_parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="公网发布根地址")
     auto_parser.add_argument("--commit-message", default="Add generated article", help="自动部署的 git commit 信息")
-    auto_parser.set_defaults(fetch=True, enrich=True, require_enriched=True, allow_risky=False)
+    auto_parser.set_defaults(
+        fetch=True,
+        enrich=True,
+        require_enriched=True,
+        allow_risky=False,
+        title_optimize=True,
+    )
     auto_parser.set_defaults(func=cmd_auto)
 
     publish_parser = subparsers.add_parser("publish", help="把文章打包为头条内容源 RSS/HTML")
