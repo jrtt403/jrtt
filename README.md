@@ -167,6 +167,34 @@ JRTT_TOUTIAO_HEADLESS=0 scripts/toutiao_auto_publish.sh
 
 注意：这是非官方浏览器自动化，不等于官方 API。登录过期、验证码、风控、后台改版、封面要求变化都可能导致失败；失败时会保存截图到 `data/toutiao_last.png`。
 
+### 发布后数据回收和标题效果打分
+
+每天发布后，可以把头条后台数据导出为 CSV，再导入本地打分。先生成模板：
+
+```bash
+python3 src/jrtt/cli.py metrics-template
+```
+
+模板默认输出到：
+
+```text
+data/toutiao_metrics_template.csv
+```
+
+CSV 支持这些列名的常见写法：标题、日期、展现量、阅读量、点击率、完读率、平均阅读时长、点赞、评论、收藏、分享。导入后会按标题匹配本地文章，并计算标题效果分：
+
+```bash
+python3 src/jrtt/cli.py metrics-import --file data/toutiao_metrics_template.csv --date 2026-07-07
+```
+
+查看报告：
+
+```bash
+python3 src/jrtt/cli.py metrics-report --limit 20
+```
+
+导入后的高分/低分标题会自动反馈给下一次 `auto` 的标题优化步骤，后续生成 5 个标题候选时会参考真实表现。
+
 没有公网域名时，可以用 GitHub Pages 免费二级域名托管内容源：
 
 ```bash
@@ -237,6 +265,5 @@ drafts/
 
 - 增加多来源交叉验证和热点聚类
 - 增加今日头条、百度、微博、抖音热榜采集模块
-- 增加文章复盘表：展现量、阅读量、点击率、评论、收藏、收益
 - 增加 Web 控制台
 - 研究官方内容源接入，不建议一开始使用非官方批量自动发布

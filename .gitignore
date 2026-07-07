@@ -8,5 +8,6 @@ venv/
 # Local runtime state
 data/*.db
 data/*.db-*
+data/*.csv
 data/toutiao_profile/
 data/toutiao_*.png

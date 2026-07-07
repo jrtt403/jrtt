@@ -20,10 +20,22 @@ from pathlib import Path
 
 try:
     from article_fetcher import ArticleContext, fetch_article_context
+    from metrics import (
+        import_metrics_csv,
+        render_title_metrics_report,
+        title_feedback_summary,
+        write_metrics_template,
+    )
     from openai_client import OpenAIConfigError, OpenAIRequestError, generate_text
     from publisher import build_public_site
 except ImportError:
     from .article_fetcher import ArticleContext, fetch_article_context
+    from .metrics import (
+        import_metrics_csv,
+        render_title_metrics_report,
+        title_feedback_summary,
+        write_metrics_template,
+    )
     from .openai_client import OpenAIConfigError, OpenAIRequestError, generate_text
     from .publisher import build_public_site
 
@@ -668,6 +680,7 @@ def optimize_article_title(
     max_output_tokens: int,
 ) -> TitleOptimizationResult:
     current_title = normalize_title(extract_article_title(article_text) or row["title"])
+    feedback = load_title_feedback_summary()
     instructions = """你是今日头条图文标题编辑。
 目标是提升自然点击率和完读预期，但必须合规、克制、准确。
 只能基于给定材料拟标题，不得编造未出现的事实、数字、人名、因果和结论。
@@ -682,6 +695,9 @@ def optimize_article_title(
 摘要：{row['summary'] or '无摘要'}
 原文抓取状态：{'成功' if article_context.ok else article_context.error}
 可核验页面标题：{article_context.title or '无'}
+
+历史标题效果反馈：
+{feedback}
 
 文章正文：
 {article_text[:3500]}
@@ -775,6 +791,13 @@ def normalize_space(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def load_title_feedback_summary() -> str:
+    try:
+        return title_feedback_summary(connect_db())
+    except Exception as exc:
+        return f"暂无可用历史数据（读取失败：{exc}）。"
+
+
 def write_final_article(
     row: sqlite3.Row,
     article_context: ArticleContext,
@@ -859,6 +882,29 @@ def write_final_article(
 
 def cmd_publish(args: argparse.Namespace) -> None:
     publish_articles(args.article, args.base_url)
+
+
+def cmd_metrics_template(args: argparse.Namespace) -> None:
+    output = args.output or DATA_DIR / "toutiao_metrics_template.csv"
+    print(write_metrics_template(ARTICLES_DIR, output))
+
+
+def cmd_metrics_import(args: argparse.Namespace) -> None:
+    result = import_metrics_csv(
+        connect_db(),
+        ARTICLES_DIR,
+        args.file,
+        args.date,
+    )
+    print(f"imported={result.imported} skipped={result.skipped}")
+    if result.unmatched:
+        print("unmatched titles:")
+        for title in result.unmatched:
+            print(f"- {title}")
+
+
+def cmd_metrics_report(args: argparse.Namespace) -> None:
+    print(render_title_metrics_report(connect_db(), args.limit))
 
 
 def publish_articles(selector: str, base_url: str) -> None:
@@ -1171,6 +1217,40 @@ def main() -> None:
         title_optimize=True,
     )
     auto_parser.set_defaults(func=cmd_auto)
+
+    metrics_template_parser = subparsers.add_parser(
+        "metrics-template",
+        help="导出头条后台数据回收 CSV 模板",
+    )
+    metrics_template_parser.add_argument(
+        "--output",
+        type=Path,
+        help="模板输出路径，默认 data/toutiao_metrics_template.csv",
+    )
+    metrics_template_parser.set_defaults(func=cmd_metrics_template)
+
+    metrics_import_parser = subparsers.add_parser(
+        "metrics-import",
+        help="导入头条后台 CSV 并计算标题效果分",
+    )
+    metrics_import_parser.add_argument(
+        "--file",
+        type=Path,
+        required=True,
+        help="头条后台导出的 CSV 文件",
+    )
+    metrics_import_parser.add_argument(
+        "--date",
+        help="CSV 没有日期列时使用的数据日期，例如 2026-07-07",
+    )
+    metrics_import_parser.set_defaults(func=cmd_metrics_import)
+
+    metrics_report_parser = subparsers.add_parser(
+        "metrics-report",
+        help="查看标题效果评分报告",
+    )
+    metrics_report_parser.add_argument("--limit", type=int, default=20)
+    metrics_report_parser.set_defaults(func=cmd_metrics_report)
 
     publish_parser = subparsers.add_parser("publish", help="把文章打包为头条内容源 RSS/HTML")
     publish_parser.add_argument(
