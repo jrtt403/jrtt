@@ -181,7 +181,7 @@ python3 src/jrtt/cli.py metrics-template
 data/toutiao_metrics_template.csv
 ```
 
-CSV 支持这些列名的常见写法：标题、日期、展现量、阅读量、点击率、完读率、平均阅读时长、点赞、评论、收藏、分享。导入后会按标题匹配本地文章，并计算标题效果分：
+CSV 支持这些列名的常见写法：标题、日期、发布时间、展现量、阅读量、点击率、完读率、平均阅读时长、点赞、评论、收藏、分享。导入后会按标题匹配本地文章，并计算标题效果分：
 
 ```bash
 python3 src/jrtt/cli.py metrics-import --file data/toutiao_metrics_template.csv --date 2026-07-07
@@ -193,7 +193,11 @@ python3 src/jrtt/cli.py metrics-import --file data/toutiao_metrics_template.csv 
 python3 src/jrtt/cli.py metrics-report --limit 20
 ```
 
-导入后的高分/低分标题会自动反馈给下一次 `auto` 的标题优化步骤，后续生成 5 个标题候选时会参考真实表现。
+报告会包含三部分：标题效果、发布时间建议、低表现文章复盘。低表现复盘会把问题初步归因为展现偏低、点击率偏低、完读率偏低、阅读时长偏短或互动偏低，并给出下一次改法。
+
+如果使用 Playwright 自动发布，脚本会在本地记录发布时间到 `data/toutiao_publish_events.jsonl`。这个文件不会提交到 Git；导入 CSV 时如果没有“发布时间”列，会自动用本地发布时间日志补齐。
+
+导入后的高分/低分标题会自动反馈给下一次 `auto` 的标题优化步骤，后续生成 5 个标题候选时会参考真实表现。等积累到每个时段至少 3 篇以上，再固定发布时间会更稳。
 
 没有公网域名时，可以用 GitHub Pages 免费二级域名托管内容源：
 

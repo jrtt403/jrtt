@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import json
 import re
 import sys
 import time
@@ -23,6 +25,7 @@ ARTICLES_DIR = ROOT / "articles"
 DATA_DIR = ROOT / "data"
 DEFAULT_PROFILE_DIR = DATA_DIR / "toutiao_profile"
 DEFAULT_SCREENSHOT = DATA_DIR / "toutiao_last.png"
+DEFAULT_PUBLISH_EVENTS = DATA_DIR / "toutiao_publish_events.jsonl"
 PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish"
 
 
@@ -161,6 +164,30 @@ def wait_for_draft_saved(page, timeout_s: int = 20) -> None:
         page.wait_for_timeout(500)
 
 
+def record_publish_event(
+    article_path: Path,
+    title: str,
+    status: str,
+    success_marker_detected: bool,
+    events_path: Path,
+) -> None:
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        article_path_rel = article_path.relative_to(ROOT)
+    except ValueError:
+        article_path_rel = article_path
+    event = {
+        "article_path": str(article_path.resolve()),
+        "article_path_rel": str(article_path_rel),
+        "title": title,
+        "published_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "status": status,
+        "success_marker_detected": success_marker_detected,
+    }
+    with events_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
 def publish_to_toutiao(args: argparse.Namespace) -> None:
     article_path = latest_article_path() if args.article == "latest" else Path(args.article)
     if not article_path.is_absolute():
@@ -207,14 +234,25 @@ def publish_to_toutiao(args: argparse.Namespace) -> None:
             click_text(page, "预览并发布", exact=True, timeout_ms=15000)
             page.wait_for_timeout(3000)
 
+            status = "previewed"
+            success_marker_detected = False
             if args.confirm_publish:
                 click_text(page, "确认发布", exact=True, timeout_ms=15000)
                 page.wait_for_timeout(5000)
-                if not (
+                success_marker_detected = bool(
                     page.get_by_text("提交成功").count()
                     or page.get_by_text("发布成功").count()
                     or page.get_by_text("审核").count()
-                ):
+                )
+                status = "submitted"
+                record_publish_event(
+                    article_path,
+                    title,
+                    status,
+                    success_marker_detected,
+                    args.publish_events,
+                )
+                if not success_marker_detected:
                     print("publish clicked, but no success marker detected yet", file=sys.stderr)
             else:
                 print("preview opened; pass --confirm-publish to click final publish", file=sys.stderr)
@@ -239,6 +277,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--article", default="latest", help="article markdown path or 'latest'")
     parser.add_argument("--profile-dir", type=Path, default=DEFAULT_PROFILE_DIR)
     parser.add_argument("--screenshot", type=Path, default=DEFAULT_SCREENSHOT)
+    parser.add_argument("--publish-events", type=Path, default=DEFAULT_PUBLISH_EVENTS)
     parser.add_argument("--headless", action="store_true", help="run without visible browser UI")
     parser.add_argument(
         "--login-wait-seconds",

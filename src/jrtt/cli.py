@@ -895,6 +895,7 @@ def cmd_metrics_import(args: argparse.Namespace) -> None:
         ARTICLES_DIR,
         args.file,
         args.date,
+        DATA_DIR / "toutiao_publish_events.jsonl",
     )
     print(f"imported={result.imported} skipped={result.skipped}")
     if result.unmatched:
