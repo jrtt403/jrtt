@@ -3,6 +3,29 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+mkdir -p data
+today="$(date +%Y-%m-%d)"
+success_marker="data/toutiao_auto_publish_last_success"
+lock_dir="data/toutiao_auto_publish.lock"
+
+if [[ "${JRTT_FORCE_RUN:-0}" != "1" && -f "$success_marker" ]]; then
+  last_success="$(tr -d '[:space:]' < "$success_marker")"
+  if [[ "$last_success" == "$today" ]]; then
+    echo "Auto publish already completed for $today; set JRTT_FORCE_RUN=1 to run anyway."
+    exit 0
+  fi
+fi
+
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  echo "Auto publish is already running: $lock_dir" >&2
+  exit 0
+fi
+
+cleanup() {
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 python_bin="${JRTT_PYTHON:-python3}"
 if [[ -x ".venv/bin/python" && -z "${JRTT_PYTHON:-}" ]]; then
   python_bin=".venv/bin/python"
@@ -92,3 +115,5 @@ for index in "${!articles[@]}"; do
     sleep "$interval"
   fi
 done
+
+printf '%s\n' "$today" > "$success_marker"

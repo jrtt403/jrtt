@@ -10,5 +10,7 @@ data/*.db
 data/*.db-*
 data/*.csv
 data/*.jsonl
+data/*.log
+data/toutiao_auto_publish_*
 data/toutiao_profile/
 data/toutiao_*.png
