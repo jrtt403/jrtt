@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 mkdir -p data
-today="$(date +%Y-%m-%d)"
+today="${JRTT_RUN_DATE:-${JRTT_ARTICLE_DATE:-$(date +%Y-%m-%d)}}"
 success_marker="data/toutiao_auto_publish_last_success"
 lock_dir="data/toutiao_auto_publish.lock"
 

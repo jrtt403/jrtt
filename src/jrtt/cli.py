@@ -51,6 +51,17 @@ SOURCES_FILE = ROOT / "config" / "sources.json"
 DB_FILE = DATA_DIR / "jrtt.db"
 
 
+def article_date_string() -> str:
+    override = os.environ.get("JRTT_ARTICLE_DATE")
+    if override:
+        try:
+            dt.date.fromisoformat(override)
+        except ValueError as exc:
+            raise SystemExit("JRTT_ARTICLE_DATE must use YYYY-MM-DD") from exc
+        return override
+    return dt.datetime.now().strftime("%Y-%m-%d")
+
+
 def connect_db() -> sqlite3.Connection:
     DATA_DIR.mkdir(exist_ok=True)
     conn = sqlite3.connect(DB_FILE)
@@ -435,7 +446,7 @@ def cmd_draft(args: argparse.Namespace) -> None:
             print("AI omitted the body; requesting a body-only draft...", file=sys.stderr)
             ai_section += build_ai_body_section(row, article_context, args.max_output_tokens)
 
-    today = dt.datetime.now().strftime("%Y-%m-%d")
+    today = article_date_string()
     title = row["title"]
     filename = f"{today}-{row['id']}-{safe_filename(title)}.md"
     DRAFTS_DIR.mkdir(exist_ok=True)
@@ -1248,7 +1259,7 @@ def write_final_article(
             print(f"  title optimization skipped: {exc}", file=sys.stderr)
             text = replace_article_title(text, title_result.selected)
 
-    today = dt.datetime.now().strftime("%Y-%m-%d")
+    today = article_date_string()
     filename = f"{today}-{row['id']}-{safe_filename(title_result.selected)}.md"
     ARTICLES_DIR.mkdir(exist_ok=True)
     output = ARTICLES_DIR / filename
@@ -1341,7 +1352,7 @@ def write_followup_article(
             print(f"  title optimization skipped: {exc}", file=sys.stderr)
             text = replace_article_title(text, title_result.selected)
 
-    today = dt.datetime.now().strftime("%Y-%m-%d")
+    today = article_date_string()
     filename = f"{today}-{row['id']}-followup-{safe_filename(title_result.selected)}.md"
     ARTICLES_DIR.mkdir(exist_ok=True)
     output = ARTICLES_DIR / filename
