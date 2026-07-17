@@ -13,6 +13,7 @@ import ssl
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -159,6 +160,96 @@ def parse_rss(payload: bytes, source: dict) -> list[dict]:
                     "source_weight": int(source.get("weight", 3)),
                 }
             )
+    return items
+
+
+def stable_toutiao_link(item: dict) -> str:
+    raw_url = str(item.get("Url") or item.get("url") or "").strip()
+    cluster_id = str(item.get("ClusterIdStr") or item.get("ClusterId") or "").strip()
+    if not raw_url and cluster_id:
+        return f"https://www.toutiao.com/trending/{cluster_id}/"
+
+    if raw_url.startswith("//"):
+        raw_url = f"https:{raw_url}"
+    elif raw_url.startswith("/"):
+        raw_url = f"https://www.toutiao.com{raw_url}"
+
+    parsed = urllib.parse.urlsplit(raw_url)
+    if parsed.scheme and parsed.netloc:
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    return raw_url
+
+
+def compact_toutiao_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        return "、".join(part for part in (compact_toutiao_value(item) for item in value) if part)
+    if isinstance(value, dict):
+        return "、".join(
+            part for part in (compact_toutiao_value(item) for item in value.values()) if part
+        )
+    return str(value).strip()
+
+
+def parse_toutiao_hot(payload: bytes, source: dict) -> list[dict]:
+    data = json.loads(payload.decode("utf-8", errors="replace"))
+    raw_items = data.get("data", [])
+    if isinstance(raw_items, dict):
+        for key in ("data", "list", "items"):
+            if isinstance(raw_items.get(key), list):
+                raw_items = raw_items[key]
+                break
+    if not isinstance(raw_items, list):
+        raise ValueError("unexpected toutiao hot payload")
+
+    max_items = int(source.get("max_items", 50))
+    fetched_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    items = []
+    for rank, item in enumerate(raw_items[:max_items], 1):
+        if not isinstance(item, dict):
+            continue
+        title = str(
+            item.get("Title")
+            or item.get("title")
+            or item.get("QueryWord")
+            or item.get("word")
+            or ""
+        ).strip()
+        link = stable_toutiao_link(item)
+        if not title or not link:
+            continue
+
+        hot_value = compact_toutiao_value(item.get("HotValue"))
+        raw_label = compact_toutiao_value(item.get("Label"))
+        label = {
+            "new": "新上榜",
+            "recentProgress": "最新进展",
+            "onSite": "现场",
+        }.get(raw_label, raw_label)
+        query_word = compact_toutiao_value(item.get("QueryWord"))
+        interest = compact_toutiao_value(item.get("InterestCategory"))
+        summary_parts = [f"今日头条热榜第{rank}名"]
+        if hot_value:
+            summary_parts.append(f"热度{hot_value}")
+        if label:
+            summary_parts.append(f"标签{label}")
+        if interest:
+            summary_parts.append(f"分类{interest}")
+        if query_word and query_word != title:
+            summary_parts.append(f"搜索词：{query_word}")
+
+        items.append(
+            {
+                "title": title,
+                "link": link,
+                "summary": "，".join(summary_parts),
+                "published_at": fetched_at,
+                "source": source["name"],
+                "category": source["category"],
+                "source_weight": int(source.get("weight", 3)),
+            }
+        )
     return items
 
 
@@ -500,7 +591,13 @@ def fetch_all_sources() -> int:
     for source in load_sources():
         try:
             payload = fetch_url(source["url"])
-            items = parse_rss(payload, source)
+            source_type = source.get("type", "rss")
+            if source_type == "toutiao_hot":
+                items = parse_toutiao_hot(payload, source)
+            elif source_type == "rss":
+                items = parse_rss(payload, source)
+            else:
+                raise ValueError(f"unsupported source type: {source_type}")
             inserted = save_items(conn, items)
             total += inserted
             print(f"{source['name']}: fetched={len(items)} inserted={inserted}")

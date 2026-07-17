@@ -1,6 +1,15 @@
 {
   "sources": [
     {
+      "name": "今日头条热榜",
+      "category": "china",
+      "url": "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc",
+      "weight": 5,
+      "type": "toutiao_hot",
+      "max_items": 50,
+      "enabled": true
+    },
+    {
       "name": "BBC World",
       "category": "international",
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
