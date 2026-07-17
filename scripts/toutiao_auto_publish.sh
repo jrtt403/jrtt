@@ -31,14 +31,14 @@ if [[ -x ".venv/bin/python" && -z "${JRTT_PYTHON:-}" ]]; then
   python_bin=".venv/bin/python"
 fi
 
-international_count="${JRTT_INTERNATIONAL_COUNT:-5}"
-china_count="${JRTT_CHINA_COUNT:-5}"
+international_count="${JRTT_INTERNATIONAL_COUNT:-2}"
+china_count="${JRTT_CHINA_COUNT:-4}"
 followup_count="${JRTT_FOLLOWUP_COUNT:-1}"
-candidate_limit="${JRTT_CANDIDATE_LIMIT:-50}"
+candidate_limit="${JRTT_CANDIDATE_LIMIT:-80}"
 min_chars="${JRTT_MIN_ARTICLE_CHARS:-1000}"
-international_min_score="${JRTT_INTERNATIONAL_MIN_SCORE:-23}"
-china_min_score="${JRTT_CHINA_MIN_SCORE:-21}"
-followup_min_score="${JRTT_FOLLOWUP_MIN_SCORE:-21}"
+international_min_score="${JRTT_INTERNATIONAL_MIN_SCORE:-24}"
+china_min_score="${JRTT_CHINA_MIN_SCORE:-23}"
+followup_min_score="${JRTT_FOLLOWUP_MIN_SCORE:-23}"
 followup_min_similarity="${JRTT_FOLLOWUP_MIN_SIMILARITY:-0.34}"
 allow_unenriched_arg=""
 if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
@@ -101,7 +101,7 @@ if [[ "${JRTT_TOUTIAO_HEADLESS:-1}" == "0" ]]; then
   headless_arg=()
 fi
 
-interval="${JRTT_TOUTIAO_INTERVAL_SECONDS:-120}"
+interval="${JRTT_TOUTIAO_INTERVAL_SECONDS:-900}"
 for index in "${!articles[@]}"; do
   article="${articles[$index]}"
   echo "Publishing to Toutiao [$((index + 1))/${#articles[@]}]: $article"

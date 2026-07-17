@@ -206,6 +206,24 @@ def score_item(item: dict) -> tuple[int, dict]:
     ordinary_keywords = [
         "price",
         "prices",
+        "cost",
+        "costs",
+        "shopping",
+        "travel",
+        "tourism",
+        "summer",
+        "ticket",
+        "tickets",
+        "consumer",
+        "consumers",
+        "family",
+        "families",
+        "school",
+        "students",
+        "ai",
+        "robot",
+        "robots",
+        "ev",
         "jobs",
         "employment",
         "policy",
@@ -216,6 +234,22 @@ def score_item(item: dict) -> tuple[int, dict]:
         "就业",
         "消费",
         "价格",
+        "省钱",
+        "涨价",
+        "降价",
+        "补贴",
+        "购物",
+        "旅游",
+        "暑期",
+        "门票",
+        "家庭",
+        "孩子",
+        "学生",
+        "工资",
+        "收入",
+        "机器人",
+        "电动车",
+        "手机",
         "政策",
         "出行",
         "教育",
@@ -235,6 +269,38 @@ def score_item(item: dict) -> tuple[int, dict]:
         "变化",
         "趋势",
         "信号",
+    ]
+    weak_click_keywords = [
+        "president",
+        "minister",
+        "foreign minister",
+        "secretary-general",
+        "spokesperson",
+        "summit",
+        "meeting",
+        "congratulates",
+        "delegation",
+        "diplomatic",
+        "ties",
+        "cooperation",
+        "presidential",
+        "总统",
+        "外长",
+        "秘书长",
+        "发言人",
+        "峰会",
+        "会晤",
+        "代表团",
+        "外交",
+        "双边",
+        "合作",
+        "建交",
+        "元首",
+        "讲话",
+        "致贺",
+        "高官",
+        "点赞",
+        "模式",
     ]
     risk_keywords = [
         "rumor",
@@ -377,6 +443,8 @@ def score_item(item: dict) -> tuple[int, dict]:
     risk = 3 if any(k in text for k in risk_keywords) else 4
     heat = min(5, max(1, item.get("source_weight", 3)))
     account_fit = 4 if item["category"] in {"international", "china"} else 3
+    traffic_bonus = 2 if any(k in text for k in ordinary_keywords) else 0
+    weak_click_penalty = 3 if any(k in text for k in weak_click_keywords) else 0
 
     detail = {
         "heat": heat,
@@ -385,8 +453,11 @@ def score_item(item: dict) -> tuple[int, dict]:
         "explain_space": explain_space,
         "account_fit": account_fit,
         "compliance_safety": risk,
+        "traffic_bonus": traffic_bonus,
+        "weak_click_penalty": -weak_click_penalty,
     }
-    return sum(detail.values()), detail
+    score = min(30, max(1, sum(detail.values())))
+    return score, detail
 
 
 def save_items(conn: sqlite3.Connection, items: list[dict]) -> int:
@@ -1191,6 +1262,8 @@ def optimize_article_title(
 目标是提升自然点击率和完读预期，但必须合规、克制、准确。
 只能基于给定材料拟标题，不得编造未出现的事实、数字、人名、因果和结论。
 禁止标题党、震惊体、煽动、阴谋论、绝对化承诺。
+避免空泛套话：新篇章、新动向、新趋势、有何奥秘、来袭、助力、赋能、引关注、谋发展、显现、开启。
+优先把标题落到读者关心的具体点：价格、出行、消费、就业、孩子、旅游、产品变化、普通人影响。
 每个标题必须不超过 30 个字符，不能用省略号截断。
 请只输出 JSON，不要输出 Markdown。"""
     user_input = f"""请为下面文章生成 5 个今日头条标题候选，并选择 1 个最优标题。
@@ -1213,6 +1286,8 @@ def optimize_article_title(
 2. 30 字以内，适合头条标题输入框
 3. 让普通人知道“为什么值得点开”
 4. 避免空泛、夸张、营销号语气
+5. 不要使用“新篇章/新动向/新趋势/有何奥秘/来袭/助力/赋能/引关注”等弱点击套话
+6. 若材料没有明确普通人影响，就选择更具体的事实标题，不要硬写宏大判断
 
 输出 JSON 格式：
 {{
@@ -1283,13 +1358,39 @@ def dedupe_title_candidates(candidates: list[TitleCandidate]) -> list[TitleCandi
     return result
 
 
+WEAK_TITLE_PHRASES = [
+    "新篇章",
+    "新动向",
+    "新趋势",
+    "有何奥秘",
+    "来袭",
+    "助力",
+    "赋能",
+    "引关注",
+    "谋发展",
+    "显现",
+    "开启",
+]
+
+
+def title_has_weak_phrase(title: str) -> bool:
+    return any(phrase in title for phrase in WEAK_TITLE_PHRASES)
+
+
 def choose_title(selected: str, candidates: list[TitleCandidate]) -> str:
     selected = normalize_title(selected)
     usable = [candidate for candidate in candidates if len(candidate.title) <= 30]
-    if any(candidate.title == selected for candidate in usable):
+    selected_is_usable = any(candidate.title == selected for candidate in usable)
+    if selected_is_usable and not title_has_weak_phrase(selected):
         return selected
     if usable:
-        return max(usable, key=lambda candidate: candidate.score).title
+        return max(
+            usable,
+            key=lambda candidate: (
+                -20 if title_has_weak_phrase(candidate.title) else 0,
+                candidate.score,
+            ),
+        ).title
     return normalize_title(selected)
 
 
@@ -1535,12 +1636,14 @@ def build_followup_article(
 输出格式：
 # 标题
 标题体现“新进展”或“后续影响”，不超过 30 字，不能夸张。
+不要使用“新篇章、新动向、新趋势、有何奥秘、来袭、助力、赋能、引关注、谋发展、显现、开启”等空泛套话。
+优先写清具体变化和普通人影响。
 
 正文结构：
 1. 开头：80-120 字说清这次新进展和为什么值得追更
 2. 和上一篇相比，新信息是什么：列出材料支持的新事实
 3. 为什么它说明事件还在发酵：解释变化、影响或后续连锁反应
-4. 对普通人有什么影响：从生活、消费、产业、规则、就业或国际关系中选择合适角度
+4. 对普通人有什么影响：从生活、消费、产业、规则、就业、出行、旅游或产品使用中选择合适角度
 5. 接下来关注什么：给 2-3 个观察点
 6. 结尾：一句有辨识度的总结
 
@@ -1655,13 +1758,14 @@ def build_final_article(
 
 输出格式：
 # 标题
-标题要有判断，但不夸张。
+标题要具体、有判断但不夸张。不要使用“新篇章、新动向、新趋势、有何奥秘、来袭、助力、赋能、引关注、谋发展、显现、开启”等空泛套话。
+优先写清读者为什么要点开：价格、出行、消费、就业、孩子、旅游、产品变化或普通人影响。
 
 正文结构：
 1. 开头：100-150 字说清事件和核心判断
 2. 发生了什么：只写材料支持的事实
 3. 为什么重要：解释背景和影响
-4. 对普通人有什么影响：从消费、就业、生活成本、商业规则或法律意识等角度选择合适方向
+4. 对普通人有什么影响：从消费、就业、生活成本、出行旅游、孩子教育、产品使用或商业规则等角度选择合适方向
 5. 接下来关注什么：给 2-3 个观察点
 6. 结尾：一句有辨识度的总结
 
