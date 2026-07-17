@@ -183,6 +183,24 @@ JRTT_TOUTIAO_HEADLESS=0 scripts/toutiao_auto_publish.sh
 
 ### 发布后数据回收和标题效果打分
 
+可以自动从头条号后台抓取已发布作品的展现、阅读、点赞、评论、收藏等数据，并直接导入本地复盘库：
+
+```bash
+python3 scripts/toutiao_metrics_playwright.py --headless --import-db
+```
+
+默认会复用 `data/toutiao_profile/` 里的登录态，输出 CSV 到：
+
+```text
+data/toutiao_metrics_auto.csv
+```
+
+如果登录过期，先用可视浏览器重新登录：
+
+```bash
+python3 scripts/toutiao_metrics_playwright.py --login-wait-seconds 180 --import-db
+```
+
 每天发布后，可以把头条后台数据导出为 CSV，再导入本地打分。先生成模板：
 
 ```bash
