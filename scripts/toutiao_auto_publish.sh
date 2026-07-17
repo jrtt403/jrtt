@@ -31,8 +31,8 @@ if [[ -x ".venv/bin/python" && -z "${JRTT_PYTHON:-}" ]]; then
   python_bin=".venv/bin/python"
 fi
 
-international_count="${JRTT_INTERNATIONAL_COUNT:-2}"
-china_count="${JRTT_CHINA_COUNT:-4}"
+international_count="${JRTT_INTERNATIONAL_COUNT:-0}"
+china_count="${JRTT_CHINA_COUNT:-6}"
 followup_count="${JRTT_FOLLOWUP_COUNT:-1}"
 candidate_limit="${JRTT_CANDIDATE_LIMIT:-80}"
 min_chars="${JRTT_MIN_ARTICLE_CHARS:-1000}"
@@ -44,12 +44,9 @@ allow_unenriched_arg=""
 if [[ -n "${JRTT_ALLOW_UNENRICHED:-}" ]]; then
   allow_unenriched_arg="--allow-unenriched"
 fi
-auto_fetch_arg=()
-if [[ "$followup_count" -gt 0 ]]; then
-  auto_fetch_arg=(--no-fetch)
-fi
-
 generated_output="$({
+"$python_bin" src/jrtt/cli.py fetch
+
 if [[ "$followup_count" -gt 0 ]]; then
 "$python_bin" src/jrtt/cli.py followup \
   --count "$followup_count" \
@@ -57,18 +54,22 @@ if [[ "$followup_count" -gt 0 ]]; then
   --min-score "$followup_min_score" \
   --min-similarity "$followup_min_similarity" \
   --min-article-chars "$min_chars" \
+  --no-fetch \
   ${allow_unenriched_arg:+$allow_unenriched_arg}
 fi
 
+if [[ "$international_count" -gt 0 ]]; then
 "$python_bin" src/jrtt/cli.py auto \
   --count "$international_count" \
   --category international \
   --candidate-limit "$candidate_limit" \
   --min-score "$international_min_score" \
   --min-article-chars "$min_chars" \
-  "${auto_fetch_arg[@]}" \
+  --no-fetch \
   ${allow_unenriched_arg:+$allow_unenriched_arg}
+fi
 
+if [[ "$china_count" -gt 0 ]]; then
 "$python_bin" src/jrtt/cli.py auto \
   --count "$china_count" \
   --category china \
@@ -77,6 +78,7 @@ fi
   --min-article-chars "$min_chars" \
   --no-fetch \
   ${allow_unenriched_arg:+$allow_unenriched_arg}
+fi
 })"
 printf '%s\n' "$generated_output"
 

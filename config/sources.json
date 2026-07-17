@@ -7,6 +7,9 @@
       "weight": 5,
       "type": "toutiao_hot",
       "max_items": 50,
+      "exclude_interest_categories": [
+        "international"
+      ],
       "enabled": true
     },
     {
@@ -14,35 +17,35 @@
       "category": "international",
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "BBC Asia",
       "category": "international",
       "url": "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "Google News Reuters Search",
       "category": "international",
       "url": "https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US%3Aen",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "CGTN China",
       "category": "china",
       "url": "https://www.cgtn.com/subscribe/rss/section/china.xml",
       "weight": 4,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "China Daily China",
       "category": "china",
       "url": "http://www.chinadaily.com.cn/rss/china_rss.xml",
       "weight": 3,
-      "enabled": true
+      "enabled": false
     },
     {
       "name": "CCTV 国内新闻",

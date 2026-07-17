@@ -94,6 +94,10 @@ def load_sources() -> list[dict]:
     return [item for item in data["sources"] if item.get("enabled", True)]
 
 
+def enabled_source_names() -> set[str]:
+    return {source["name"] for source in load_sources()}
+
+
 def fetch_url(url: str) -> bytes:
     req = urllib.request.Request(
         url,
@@ -204,6 +208,9 @@ def parse_toutiao_hot(payload: bytes, source: dict) -> list[dict]:
         raise ValueError("unexpected toutiao hot payload")
 
     max_items = int(source.get("max_items", 50))
+    excluded_categories = {
+        str(category).lower() for category in source.get("exclude_interest_categories", [])
+    }
     fetched_at = dt.datetime.now(dt.timezone.utc).isoformat()
     items = []
     for rank, item in enumerate(raw_items[:max_items], 1):
@@ -220,6 +227,13 @@ def parse_toutiao_hot(payload: bytes, source: dict) -> list[dict]:
         if not title or not link:
             continue
 
+        interest = compact_toutiao_value(item.get("InterestCategory"))
+        interest_tokens = {
+            token for token in re.split(r"[、,\s]+", interest.lower()) if token
+        }
+        if excluded_categories and interest_tokens & excluded_categories:
+            continue
+
         hot_value = compact_toutiao_value(item.get("HotValue"))
         raw_label = compact_toutiao_value(item.get("Label"))
         label = {
@@ -228,7 +242,6 @@ def parse_toutiao_hot(payload: bytes, source: dict) -> list[dict]:
             "onSite": "现场",
         }.get(raw_label, raw_label)
         query_word = compact_toutiao_value(item.get("QueryWord"))
-        interest = compact_toutiao_value(item.get("InterestCategory"))
         summary_parts = [f"今日头条热榜第{rank}名"]
         if hot_value:
             summary_parts.append(f"热度{hot_value}")
@@ -805,8 +818,13 @@ def find_auto_candidates(
     allow_risky: bool,
     category: str | None = None,
 ) -> list[sqlite3.Row]:
+    allowed_sources = sorted(enabled_source_names())
+    if not allowed_sources:
+        return []
+
     category_filter = ""
-    params: list[object] = [min_score]
+    source_filter = "AND source IN ({})".format(",".join("?" for _ in allowed_sources))
+    params: list[object] = [min_score, *allowed_sources]
     if category:
         category_filter = "AND category = ?"
         params.append(category)
@@ -816,6 +834,7 @@ def find_auto_candidates(
         SELECT *
         FROM news_items
         WHERE score >= ?
+        {source_filter}
         {category_filter}
         ORDER BY score DESC, COALESCE(published_at, fetched_at) DESC
         LIMIT ?
@@ -1139,15 +1158,21 @@ def find_followup_candidates(
     min_similarity: float,
     allow_risky: bool,
 ) -> list[FollowUpCandidate]:
+    allowed_sources = sorted(enabled_source_names())
+    if not allowed_sources:
+        return []
+
+    source_filter = "AND source IN ({})".format(",".join("?" for _ in allowed_sources))
     rows = conn.execute(
-        """
+        f"""
         SELECT *
         FROM news_items
         WHERE score >= ?
+        {source_filter}
         ORDER BY COALESCE(published_at, fetched_at) DESC, score DESC
         LIMIT ?
         """,
-        (min_score, limit),
+        (min_score, *allowed_sources, limit),
     ).fetchall()
     candidates: list[FollowUpCandidate] = []
     seen_item_ids: set[int] = set()
